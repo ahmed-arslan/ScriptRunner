@@ -1,0 +1,58 @@
+def issueKey = issue.key //Replace issue with issuekey.
+def startAt = 0
+def maxResults = 100
+def allAssignments = []
+
+// Fetch all changelog pages
+while (true) {
+    def response = get("/rest/api/2/issue/${issueKey}/changelog")
+        .queryString("startAt", startAt)
+        .queryString("maxResults", maxResults)
+        .header("Content-Type", "application/json")
+        .asObject(Map)
+        .body
+
+    // Iterate through changelog entries
+    response.values.each { entry ->
+        entry.items.each { item ->
+            // Check for assignee changes from null to a user
+            if (item.field == "assignee" && item.from == null && item.to != null) {
+                // Use item.'toString' to access the JSON field (not Groovy's toString() method)
+                def displayName = item.'toString' // This is "John Wick" from your example
+                def accountId = item.to // This is "assigneeID"
+                
+                allAssignments << [
+                    assigneeId: accountId,
+                    assigneeName: displayName,
+                    assignedDate: entry.created
+                ]
+            }
+        }
+    }
+
+    if (response.isLast) break
+    startAt += maxResults
+}
+
+// Find the FIRST assignment (earliest date)
+def firstAssignment = allAssignments.min { a, b -> 
+    a.assignedDate <=> b.assignedDate 
+}
+
+if (firstAssignment) {
+    def customFieldId = "customfield_10123" // Replace with your custom field ID
+    def updatePayload = [
+        fields: [
+            (customFieldId): firstAssignment.assigneeId
+        ]
+    ]
+    
+    put("/rest/api/2/issue/${issueKey}")
+        .header("Content-Type", "application/json")
+        .body(updatePayload)
+        .asString()
+    
+    logger.info("First assignee: ${firstAssignment.assigneeName} (ID: ${firstAssignment.assigneeId})")
+} else {
+    logger.info("No initial assignment found.")
+}
